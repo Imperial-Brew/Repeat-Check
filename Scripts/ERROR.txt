@@ -1,0 +1,151 @@
+"C:\Program Files\Python310\python.exe" "C:/Program Files/JetBrains/PyCharm 2025.1.1.1/plugins/python-ce/helpers/pydev/pydevd.py" --multiprocess --qt-support=auto --client 127.0.0.1 --port 65049 --file "F:\Dustin Drab\PythonProjects\Repeat-Check\Scripts\part_history_checker.py" 
+Connected to pydev debugger (build 251.26094.141)
+2025-06-24 15:14:49,870 - INFO - Starting part history check process
+2025-06-24 15:14:49,905 - INFO - Loading data from ..\data\quote_items_7900_7950_complete.csv
+2025-06-24 15:14:50,456 - INFO - Loaded 519 rows, found 237 unique part numbers
+2025-06-24 15:14:50,485 - INFO - Connecting to database M2MData01 on server Ath-sql
+2025-06-24 15:14:50,548 - INFO - Database connection successful
+2025-06-24 15:14:50,600 - INFO - Querying manufacturing history for 237 part numbers
+F:\Dustin Drab\PythonProjects\Repeat-Check\Scripts\part_history_checker.py:134: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  chunk_df = pd.read_sql(query, conn)
+2025-06-24 15:14:52,180 - INFO - Query returned 504 manufacturing history records
+2025-06-24 15:14:52,215 - INFO - Querying sales history for 237 part numbers
+F:\Dustin Drab\PythonProjects\Repeat-Check\Scripts\part_history_checker.py:192: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  chunk_df = pd.read_sql(query, conn)
+2025-06-24 15:14:52,950 - INFO - Query returned 470 sales history records
+2025-06-24 15:14:52,979 - INFO - Querying average cost for 237 part numbers
+F:\Dustin Drab\PythonProjects\Repeat-Check\Scripts\part_history_checker.py:291: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  chunk_df = pd.read_sql(query, conn)
+2025-06-24 15:14:53,137 - ERROR - Average cost query failed: Execution failed on sql '
+            SELECT 
+                m.fpartno AS PartNumber, 
+                m.fpartrev AS Revision,
+                m.fdescript AS Description,
+                m.fstdcost AS StandardCost,
+                subq.Average_Cost,
+                subq.JobCount
+            FROM 
+                INMAST m
+            LEFT JOIN (
+                SELECT 
+                    tmp2.fpartno, 
+                    tmp2.fpartrev,  
+                    AVG(tmp2.total_cost) AS Average_Cost, 
+                    COUNT(tmp2.fpartno) AS JobCount
+                FROM (
+                    SELECT 
+                        m.fjobno, 
+                        m.fpartno, 
+                        m.fpartrev,
+                        m.fact_rel, 
+                        CASE 
+                            WHEN m.fquantity = 0 THEN NULL 
+                            ELSE (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity 
+                        END AS total_cost, 
+                        ROW_NUMBER() OVER (
+                            PARTITION BY m.fpartno 
+                            ORDER BY 
+                                CASE 
+                                    WHEN m.fquantity = 0 THEN 0 
+                                    ELSE (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity 
+                                END
+                        ) AS rn
+                    FROM 
+                        jomast m
+                    JOIN 
+                        jopact a ON m.fjobno = a.fjobno
+                    JOIN (
+                        SELECT 
+                            m.fjobno, 
+                            m.fpartno, 
+                            m.fpartrev,
+                            m.fact_rel, 
+                            ROW_NUMBER() OVER (
+                                PARTITION BY m.fpartno 
+                                ORDER BY m.fact_rel DESC
+                            ) AS rn1
+                        FROM 
+                            jomast m
+                        JOIN 
+                            jopact a ON m.fjobno = a.fjobno
+                        WHERE 
+                            m.fstatus = 'closed' 
+                            AND m.fquantity <> 0 
+                            AND m.fact_rel > DATEADD(YEAR, -5, GETDATE())
+                    ) tmp ON tmp.fjobno = m.fjobno 
+                    WHERE rn1 <= 10
+                ) tmp2
+                WHERE rn <= 9 AND rn >= 2
+                GROUP BY tmp2.fpartno, tmp2.fpartrev
+            ) AS subq ON subq.fpartno = m.fpartno AND subq.fpartrev = m.frev
+            WHERE m.fpartno IN ('74a120989-2002','68A731830','512-034-700-141','512-034-710-105','512-030-401-581','512-030-411-299','512-030-110-537','512-015-038-101','512-042-509-101','5177171','5177211','5177173','5177177','0011-03089','0040-07101-1','407-010-104-113A','512-030-101-831','512-030-101-839','512-030-101-841','512-030-130-731','0043-03132','0043-03257','0043-03258','0040-21188','0041-40035','450-075-235-105','20726GB03101B','E17783100','0022-66323','0010-93841','5116T37P02','0011-05130','0023-09253','0021-93970','901-005-887-101','901-005-890-101','901-005-890-103','901-075-670-103','901-075-672-101','901-075-694-107','901-075-694-109','901-075-894-101','901-375-660-501','0011-03503','0010-11382','CHCP-02115','0011-09880','0010-48281','E170159330','449W7510-2033B','449W7510-2033C','356T0101-33','356T0101-34','449-375-224-101','449-375-225-101','449-075-211-105','449-075-211-103','449-075-368-101','449-075-206-101','449-075-206-103','449-075-249-117','449-075-249-103','449-075-367-101','449-075-359-101','449-375-365-101','449-375-358-101','449-375-361-101','449-075-355-102','449-075-355-101','512-030-100-017','206-062-657-003','512-060-740-101I','512-060-750-101I','512-030-411-309','512-069-644-103','512-069-644-105','512-010-163-105','204-060-031-015','0041-44563','0015-07359','1141340-002','1141341-002','450-075-203-101','901-005-601-105','901-005-601-106','901-005-894-101','901-005-898-101','450-075-241-101','0043-08842','0043-09792','200K21-00252','E18293440','E17398740','E17200520','E11581740','0010-00621','783-H002','783-H004','450-375-513-101-KIT','0042-97236','512-069-680-105','512-001-052-101','204-011-120-005','512-030-150-231','512-030-430-589','512-034-700-075','512-034-700-077','0011-12723','0011-12725','0043-06177','0022-50139','0021-34554','0023-39950','0023-39951','02064872-027','0090-13611','DA322A0437-1','0042-95610','0011-05881','0270-06482','0270-18298','0040-32048','E17553180','0021-91756','0020-48796','246K899H01','01-0003-0000','01-0009-0000','01-0020-0000','10-0015-009L','10-0015-000R','10-0015-0035','10-0015-0036','10-0015-0310','10-0015-002L','10-0015-002R','10-0015-0400','10-0015-0010','10-0003-0070','10-0015-0070','10-0003-0075','10-0002-0000','10-0015-0280','10-0015-0051','10-0015-0054','10-0015-0017','10-0015-0290','10-0015-022L','10-0015-022R','10-0015-021L','10-0015-021R','10-0015-020L','10-0015-020R','10-0050-0000','10-0006-0140','10-0006-0120','01-0013-0000','10-0001-0017','10-0014-0010','10-0014-0020','10-0019-0010','10-0019-0020','10-0006-0040','10-0006-0050','10-0006-0060','10-0006-006L','10-0006-006R','10-0006-0030','10-0006-007L','10-0006-007R','10-0006-0070','10-0006-0015','10-0006-0130','10-0006-0010','10-0006-0020','10-0006-0105','10-0006-1000','10-0001-0160','10-0001-0127','10-0015-001L','10-0015-001R','10-0018-000L','10-0018-000R','10-0020-0000','10-0012-0000','10-0001-0170','10-0001-0175','512-030-431-067','512-030-530-293','623Z8065-101','512-030-400-587','512-030-400-583','0021-96978','0011-01389','0042-67405','0023-38363','0023-39128','0023-39129','0023-45056','0043-03541','0043-03586','0043-03685','0043-10081','413A3007-141B','844Z1503-553','0042-67371','0043-10080','0041-58752','0041-35140','0041-35215','0241-20683','BB1K0006A','BB1K0007A','BB1K0018A','BB1K0021A','512-030-110-103','512-030-110-021','512-030-101-429','512-069-320-111','0011-06880','0052-07463','512-030-300-495','26977','436678','512-030-600-181','512-030-400-295','512-069-321-139','512-030-100-357','512-030-100-565','512-030-600-469','512-069-120-103','512-069-220-103','512-069-320-113','512-069-612-101','512-030-600-303','512-030-600-307','512-030-610-163')
+            ': ('42S22', "[42S22] [Microsoft][ODBC SQL Server Driver][SQL Server]Invalid column name 'fpartrev'. (207) (SQLExecDirectW)")
+2025-06-24 15:14:53,210 - ERROR - Unexpected error: Execution failed on sql '
+            SELECT 
+                m.fpartno AS PartNumber, 
+                m.fpartrev AS Revision,
+                m.fdescript AS Description,
+                m.fstdcost AS StandardCost,
+                subq.Average_Cost,
+                subq.JobCount
+            FROM 
+                INMAST m
+            LEFT JOIN (
+                SELECT 
+                    tmp2.fpartno, 
+                    tmp2.fpartrev,  
+                    AVG(tmp2.total_cost) AS Average_Cost, 
+                    COUNT(tmp2.fpartno) AS JobCount
+                FROM (
+                    SELECT 
+                        m.fjobno, 
+                        m.fpartno, 
+                        m.fpartrev,
+                        m.fact_rel, 
+                        CASE 
+                            WHEN m.fquantity = 0 THEN NULL 
+                            ELSE (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity 
+                        END AS total_cost, 
+                        ROW_NUMBER() OVER (
+                            PARTITION BY m.fpartno 
+                            ORDER BY 
+                                CASE 
+                                    WHEN m.fquantity = 0 THEN 0 
+                                    ELSE (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity 
+                                END
+                        ) AS rn
+                    FROM 
+                        jomast m
+                    JOIN 
+                        jopact a ON m.fjobno = a.fjobno
+                    JOIN (
+                        SELECT 
+                            m.fjobno, 
+                            m.fpartno, 
+                            m.fpartrev,
+                            m.fact_rel, 
+                            ROW_NUMBER() OVER (
+                                PARTITION BY m.fpartno 
+                                ORDER BY m.fact_rel DESC
+                            ) AS rn1
+                        FROM 
+                            jomast m
+                        JOIN 
+                            jopact a ON m.fjobno = a.fjobno
+                        WHERE 
+                            m.fstatus = 'closed' 
+                            AND m.fquantity <> 0 
+                            AND m.fact_rel > DATEADD(YEAR, -5, GETDATE())
+                    ) tmp ON tmp.fjobno = m.fjobno 
+                    WHERE rn1 <= 10
+                ) tmp2
+                WHERE rn <= 9 AND rn >= 2
+                GROUP BY tmp2.fpartno, tmp2.fpartrev
+            ) AS subq ON subq.fpartno = m.fpartno AND subq.fpartrev = m.frev
+            WHERE m.fpartno IN ('74a120989-2002','68A731830','512-034-700-141','512-034-710-105','512-030-401-581','512-030-411-299','512-030-110-537','512-015-038-101','512-042-509-101','5177171','5177211','5177173','5177177','0011-03089','0040-07101-1','407-010-104-113A','512-030-101-831','512-030-101-839','512-030-101-841','512-030-130-731','0043-03132','0043-03257','0043-03258','0040-21188','0041-40035','450-075-235-105','20726GB03101B','E17783100','0022-66323','0010-93841','5116T37P02','0011-05130','0023-09253','0021-93970','901-005-887-101','901-005-890-101','901-005-890-103','901-075-670-103','901-075-672-101','901-075-694-107','901-075-694-109','901-075-894-101','901-375-660-501','0011-03503','0010-11382','CHCP-02115','0011-09880','0010-48281','E170159330','449W7510-2033B','449W7510-2033C','356T0101-33','356T0101-34','449-375-224-101','449-375-225-101','449-075-211-105','449-075-211-103','449-075-368-101','449-075-206-101','449-075-206-103','449-075-249-117','449-075-249-103','449-075-367-101','449-075-359-101','449-375-365-101','449-375-358-101','449-375-361-101','449-075-355-102','449-075-355-101','512-030-100-017','206-062-657-003','512-060-740-101I','512-060-750-101I','512-030-411-309','512-069-644-103','512-069-644-105','512-010-163-105','204-060-031-015','0041-44563','0015-07359','1141340-002','1141341-002','450-075-203-101','901-005-601-105','901-005-601-106','901-005-894-101','901-005-898-101','450-075-241-101','0043-08842','0043-09792','200K21-00252','E18293440','E17398740','E17200520','E11581740','0010-00621','783-H002','783-H004','450-375-513-101-KIT','0042-97236','512-069-680-105','512-001-052-101','204-011-120-005','512-030-150-231','512-030-430-589','512-034-700-075','512-034-700-077','0011-12723','0011-12725','0043-06177','0022-50139','0021-34554','0023-39950','0023-39951','02064872-027','0090-13611','DA322A0437-1','0042-95610','0011-05881','0270-06482','0270-18298','0040-32048','E17553180','0021-91756','0020-48796','246K899H01','01-0003-0000','01-0009-0000','01-0020-0000','10-0015-009L','10-0015-000R','10-0015-0035','10-0015-0036','10-0015-0310','10-0015-002L','10-0015-002R','10-0015-0400','10-0015-0010','10-0003-0070','10-0015-0070','10-0003-0075','10-0002-0000','10-0015-0280','10-0015-0051','10-0015-0054','10-0015-0017','10-0015-0290','10-0015-022L','10-0015-022R','10-0015-021L','10-0015-021R','10-0015-020L','10-0015-020R','10-0050-0000','10-0006-0140','10-0006-0120','01-0013-0000','10-0001-0017','10-0014-0010','10-0014-0020','10-0019-0010','10-0019-0020','10-0006-0040','10-0006-0050','10-0006-0060','10-0006-006L','10-0006-006R','10-0006-0030','10-0006-007L','10-0006-007R','10-0006-0070','10-0006-0015','10-0006-0130','10-0006-0010','10-0006-0020','10-0006-0105','10-0006-1000','10-0001-0160','10-0001-0127','10-0015-001L','10-0015-001R','10-0018-000L','10-0018-000R','10-0020-0000','10-0012-0000','10-0001-0170','10-0001-0175','512-030-431-067','512-030-530-293','623Z8065-101','512-030-400-587','512-030-400-583','0021-96978','0011-01389','0042-67405','0023-38363','0023-39128','0023-39129','0023-45056','0043-03541','0043-03586','0043-03685','0043-10081','413A3007-141B','844Z1503-553','0042-67371','0043-10080','0041-58752','0041-35140','0041-35215','0241-20683','BB1K0006A','BB1K0007A','BB1K0018A','BB1K0021A','512-030-110-103','512-030-110-021','512-030-101-429','512-069-320-111','0011-06880','0052-07463','512-030-300-495','26977','436678','512-030-600-181','512-030-400-295','512-069-321-139','512-030-100-357','512-030-100-565','512-030-600-469','512-069-120-103','512-069-220-103','512-069-320-113','512-069-612-101','512-030-600-303','512-030-600-307','512-030-610-163')
+            ': ('42S22', "[42S22] [Microsoft][ODBC SQL Server Driver][SQL Server]Invalid column name 'fpartrev'. (207) (SQLExecDirectW)")
+
+Error: An unexpected error occurred. See log for details.
+2025-06-24 15:14:53,351 - INFO - Database connection closed
+
+Process finished with exit code 1

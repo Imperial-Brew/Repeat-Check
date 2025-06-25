@@ -1,0 +1,58 @@
+WITH CTE AS
+(
+SELECT RTRIM(i.fpartno) + ' - ' 'fparent', i.frev AS 'fparentrev', RTRIM(i.FPARTNO)as 'fcomponent', i.frev as 'fcomprev', 1 as 'fqty', 0 as 'bomlvl'  
+FROM inmast i
+where i.fpartno = '0023-09253' AND i.frev = '02'
+ 
+UNION ALL
+ 
+SELECT RTRIM(p.fparent) + ' - ' 'fparent', p.fparentrev, RTRIM(p.fcomponent) 'fcomponent', p.fcomprev, p.fqty, 1 as bomlvl
+FROM inboms p
+WHERE
+ 
+fparent = '0023-09253' AND fparentrev = '02'
+ 
+UNION ALL
+ 
+SELECT RTRIM(c.fparent) + ' - ' 'fparent', c.fparentrev, RTRIM(c.fcomponent) 'fcomponent', c.fcomprev, c.fqty, bomlvl + 1
+FROM inboms c
+JOIN CTE ON CTE.fcomponent = c.fparent AND CTE.fcomprev = c.fparentrev
+)
+SELECT CTE.*, m.fstdcost, subq1.Average_Cost, subq1.JobCount
+ 
+FROM CTE
+left JOIN inmast m ON cte.fcomponent = m.fpartno AND cte.fcomprev = m.frev
+LEFT JOIN jomast j ON m.fpartno = j.fpartno AND m.frev = j.fpartrev
+left join
+( 
+select  tmp2.fpartno, tmp2.fpartrev,  AVG(tmp2.total_cost) 'Average_Cost', COUNT(tmp2.fpartno) as 'JobCount'
+from
+(
+select m.fjobno, m.fpartno, m.fpartrev ,m.fact_rel, 
+		case when m.fquantity = 0 then 'NA' else (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity end as 'total_cost', 
+		ROW_NUMBER() over (partition by m.fpartno order by case when m.fquantity = 0 then 0 else 
+		(a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity end) as rn
+	from jomast m
+	join jopact a on m.fjobno = a.fjobno
+	join
+(
+select m.fjobno, m.fpartno, m.fpartrev ,m.fact_rel, 
+		case when m.fquantity = 0 then 'NA' else (a.fmatlact + a.fsubact + a.fsetupact + a.flabact + a.fovhdact + a.fothract)/m.fquantity end as 'total_cost1', 
+		ROW_NUMBER() over (partition by m.fpartno order by m.fact_rel desc) as rn1
+from jomast m
+join jopact a on m.fjobno = a.fjobno
+where m.fstatus = 'closed' and m.fquantity <> 0 and m.fact_rel > GETDATE()-730 
+) tmp 
+	on tmp.fjobno = m.fjobno 
+	where  rn1 <= 10 
+) tmp2
+where  rn <= 9 and rn >=2 
+group by  tmp2.fpartno, tmp2.fpartrev
+) as subq1
+on subq1.fpartno = CTE.fcomponent and subq1.fpartrev = cte.fcomprev
+WHERE
+m.fac = 'default' and m.fcpurchase <> 'Y' 
+GROUP BY
+CTE.fparent, CTE.fparentrev, CTE.fcomponent, CTE.fcomprev, CTE.fqty, CTE.bomlvl, m.fstdcost, subq1.Average_Cost, subq1.JobCount
+ORDER BY
+bomlvl, fparent, fcomponent

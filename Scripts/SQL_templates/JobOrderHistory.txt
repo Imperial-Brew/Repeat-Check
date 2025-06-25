@@ -1,0 +1,22 @@
+SELECT
+    jm.fjobno       AS [JobNumber],
+    jm.fpartno      AS [PartNumber],
+    jm.fpartrev     AS [Revision],
+    jm.fddue_date   AS [DueDate],
+    jm.fquantity    AS [Quantity],
+    jm.fcus_id      AS [Customer],
+    jm.fstatus      AS [Status],
+    jp.flabact      AS [Labor],
+    jp.FMATLACT     AS [Material],
+    jp.FOVHDACT     AS [Overhead],
+    jp.FSETUPACT    AS [Setup],
+    jp.FSUBACT      AS [Sub]
+
+FROM
+    JOMAST jm
+LEFT JOIN
+    JOPACT jp ON jm.fjobno = jp.fjobno
+WHERE
+    jm.fddue_date >= DATEADD(DAY, -1500, GETDATE())
+    AND jm.fstatus IN ('CLOSED', 'RELEASED')
+    AND

@@ -1,0 +1,17 @@
+SELECT
+    S.FSONO                      AS SalesOrderNumber,
+    S.FCUSTNO                    AS CustomerNumber,
+    S.FCOMPANY                   AS CustomerName,
+    I.FPARTNO                    AS PartNumber,
+    I.FCITEMSTATUS		 AS ItemStatus,
+    I.FQUANTITY                  AS OrderedQty,
+    R.FNETPRICE                  AS UnitPrice,
+    (I.FQUANTITY  R.FNETPRICE)  AS TotalValue,
+    S.FORDERDATE                 AS OrderDate
+FROM
+    SOMAST S
+JOIN
+    SOITEM I ON S.FSONO = I.FSONO
+JOIN
+    SORELS R ON I.FSONO = R.FSONO AND I.FENUMBER = R.FENUMBER
+WHERE
