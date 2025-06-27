@@ -6,15 +6,21 @@ It queries a database for manufacturing history, sales history, and cost analysi
 then compiles the results into a multi-sheet Excel report.
 
 The script can also generate a detailed summary for a specific part number, showing
-how many times it has been built, the average cost, and the previous 5 sales orders.
+manufacturing metrics, sales history, and business metrics like margins and risk assessments.
 
 Usage:
     python part_history_checker.py [csv_file_path]
 
-    If csv_file_path is not provided, it defaults to '../data/quote_items_7900_7950_complete.csv'
+    If csv_file_path is not provided, it defaults to '../data/quote_items_7000_8067_complete.csv'
 
     For a detailed summary of a specific part:
     python part_history_checker.py --part "0020-48796"
+
+    For a detailed summary in JSON format:
+    python part_history_checker.py --part "0020-48796" --json
+
+    For processing parts in batches:
+    python part_history_checker.py --batch 5
 
 Output:
     - When processing multiple parts: Excel file with four sheets:
@@ -27,6 +33,13 @@ Output:
       - Number of times the part has been built in the past 5 years
       - Average manufacturing cost
       - Previous 5 sales orders with details (date, quantity, order number, price)
+
+    - When using --part with --json option: JSON output with comprehensive metrics:
+      - Basic part information (part number, current revision)
+      - Manufacturing metrics (total builds, builds by revision, average costs)
+      - Sales information (recent sales orders, annual revenue)
+      - RFQ information from the CSV file
+      - Calculated business metrics (margins, risk assessments)
 
 Requirements:
     - .env file with database connection parameters (DB_DRIVER, DB_SERVER, DB_NAME)
@@ -60,7 +73,8 @@ logging.basicConfig(
             os.path.join(
                 logs_dir,
                 f"part_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-            )
+            ),
+            encoding='utf-8'
         ),
         logging.StreamHandler()
     ]
@@ -244,6 +258,14 @@ def query_part_sales_history(engine, part_numbers):
             part_list = ",".join(f"'{p}'" for p in part_chunk)
             logging.info(f"Querying sales history for {len(part_chunk)} parts")
             query = f"""
+                WITH RankedReleases AS (
+                    SELECT 
+                        R.FSONO, 
+                        R.FENUMBER, 
+                        R.FNETPRICE,
+                        ROW_NUMBER() OVER (PARTITION BY R.FSONO, R.FENUMBER ORDER BY R.FRELEASE DESC) AS ReleaseRank
+                    FROM SORELS R
+                )
                 SELECT
                     S.FSONO    AS SalesOrderNumber,
                     S.FCUSTNO  AS CustomerNumber,
@@ -252,12 +274,15 @@ def query_part_sales_history(engine, part_numbers):
                     I.FPARTREV AS Revision,
                     I.FCITEMSTATUS AS ItemStatus,
                     I.FQUANTITY    AS OrderedQty,
-                    CASE WHEN I.FQUANTITY=0 THEN 0 ELSE R.FNETPRICE/I.FQUANTITY END AS UnitPrice,
-                    R.FNETPRICE    AS TotalValue,
+                    CASE 
+                        WHEN I.FQUANTITY=0 THEN 0 
+                        ELSE R.FNETPRICE/I.FQUANTITY 
+                    END AS UnitPrice,
+                    R.FNETPRICE AS TotalValue,
                     S.FORDERDATE   AS OrderDate
                 FROM SOMAST S
-                JOIN SOITEM I  ON S.FSONO=I.FSONO
-                JOIN SORELS R  ON I.FSONO=R.FSONO AND I.FENUMBER=R.FENUMBER
+                JOIN SOITEM I ON S.FSONO=I.FSONO
+                JOIN RankedReleases R ON S.FSONO=R.FSONO AND I.FENUMBER=R.FENUMBER AND R.ReleaseRank=1
                 WHERE I.FPARTNO IN ({part_list})
                   AND S.FORDERDATE >= DATEADD(YEAR, -5, GETDATE())
                 ORDER BY I.FPARTNO, S.FORDERDATE DESC
@@ -367,7 +392,196 @@ def query_part_average_cost(engine, part_numbers):
         logging.error(f"Average cost query failed: {e}")
         raise
 
-def generate_part_summary(engine, part_number):
+def generate_part_summary_dict(engine, part_number, csv_data=None):
+    """
+    Generate a detailed summary dictionary for a specific part number.
+
+    Creates a dictionary with comprehensive information about:
+    - Basic part information (part number, current revision)
+    - Manufacturing metrics (total builds, builds by revision, average costs)
+    - Sales information (recent sales orders, annual revenue)
+    - Calculated business metrics (margins, risk assessments)
+
+    Args:
+        engine (sqlalchemy.engine.Engine): Database connection engine
+        part_number (str): The part number to generate summary for
+        csv_data (pandas.DataFrame, optional): DataFrame containing RFQ data
+
+    Returns:
+        dict: Dictionary containing detailed part metrics
+    """
+    # Query manufacturing history for this part
+    manu_df = query_part_manufacturing_history(engine, [part_number])
+
+    # Query cost information for this part
+    cost_df = query_part_average_cost(engine, [part_number])
+
+    # Query sales history for this part
+    sales_df = query_part_sales_history(engine, [part_number])
+
+    # Get the revision from the CSV file instead of SQL data
+    csv_revision = "05"  # Default to 05 as specified in notes.txt
+    if csv_data is not None:
+        # Filter CSV data for this part number
+        part_rows = csv_data[csv_data['part_number'] == part_number]
+        if not part_rows.empty and 'revision' in part_rows.columns:
+            # Use the first revision found
+            if not part_rows['revision'].isna().all():
+                csv_revision = part_rows['revision'].iloc[0]
+
+    result = {
+        "PartNumber": part_number,
+        "CurrentRevision": csv_revision,
+    }
+
+    # Manufacturing metrics
+    total_builds = len(manu_df) if not manu_df.empty else 0
+    result["TotalBuilds"] = total_builds
+
+    # Calculate builds by revision
+    builds_by_revision = {}
+    if not manu_df.empty and 'Revision' in manu_df.columns:
+        rev_counts = manu_df['Revision'].value_counts().to_dict()
+        builds_by_revision = {str(rev): count for rev, count in rev_counts.items()}
+    result["BuildsByRevision"] = builds_by_revision
+
+    # Average costs - Fix the calculation to ensure it's not NaN
+    avg_cost_all_revs = 0
+    if not cost_df.empty and 'Average_Cost' in cost_df.columns:
+        valid_costs = cost_df['Average_Cost'].dropna()
+        if not valid_costs.empty:
+            avg_cost_all_revs = float(valid_costs.mean())
+
+    # Recent standard cost (from most recent job)
+    recent_std_cost = 0
+    if not cost_df.empty and 'StandardCost' in cost_df.columns:
+        valid_costs = cost_df['StandardCost'].dropna()
+        if not valid_costs.empty:
+            recent_std_cost = float(valid_costs.iloc[0])
+
+    # Recent sales orders
+    recent_sales_orders = []
+    if not sales_df.empty:
+        # Sort by OrderDate descending to get the most recent orders
+        recent_sales = sales_df.sort_values('OrderDate', ascending=False).head(5)
+
+        for _, row in recent_sales.iterrows():
+            order_date = row['OrderDate'].strftime('%Y-%m-%d') if pd.notna(row['OrderDate']) else None
+            ordered_qty = int(row['OrderedQty']) if pd.notna(row['OrderedQty']) else 0
+            sales_order = row['SalesOrderNumber'] if pd.notna(row['SalesOrderNumber']) else None
+            total_value = float(row['TotalValue']) if pd.notna(row['TotalValue']) else 0
+
+            # Calculate unit price as TotalValue/Qty
+            unit_price = 0
+            if ordered_qty > 0:
+                unit_price = total_value / ordered_qty
+
+            recent_sales_orders.append({
+                "OrderDate": order_date,
+                "Qty": ordered_qty,
+                "SONumber": sales_order,
+                "UnitPrice": round(unit_price, 2)
+            })
+    result["RecentSalesOrders"] = recent_sales_orders
+
+    # Annual revenue
+    annual_revenue = {}
+    current_year = datetime.now().year
+    # Initialize with zeros for the last 6 years
+    for year in range(current_year - 5, current_year + 1):
+        annual_revenue[year] = 0.0
+
+    if not sales_df.empty and 'OrderDate' in sales_df.columns and 'TotalValue' in sales_df.columns:
+        # Add year column to sales_df
+        sales_df['Year'] = sales_df['OrderDate'].dt.year
+        # Group by year and sum TotalValue
+        yearly_revenue = sales_df.groupby('Year')['TotalValue'].sum().to_dict()
+        # Update annual_revenue with actual values
+        for year, revenue in yearly_revenue.items():
+            if year in annual_revenue:
+                annual_revenue[year] = float(revenue)
+    result["AnnualRevenue"] = annual_revenue
+
+    # Average annual revenue
+    avg_annual_revenue = sum(annual_revenue.values()) / 6  # Average over 6 years
+    result["AvgAnnualRevenue"] = round(avg_annual_revenue, 2)
+
+    # RFQ quantity
+    rfq_qty = 0
+    if csv_data is not None:
+        # Filter CSV data for this part number
+        part_rows = csv_data[csv_data['part_number'] == part_number]
+        if not part_rows.empty and 'quantity' in part_rows.columns:
+            # Use the first quantity found (or could use max, sum, etc.)
+            rfq_qty = int(part_rows['quantity'].iloc[0])
+    result["RFQQty"] = rfq_qty
+
+    # Recent sales metrics - Find the most recent non-zero unit price
+    recent_so_qty = 0
+    recent_so_date = None
+    recent_unit_price = 0.0
+
+    if recent_sales_orders:
+        # Look for the first non-zero unit price
+        for sale in recent_sales_orders:
+            if sale["UnitPrice"] > 0:
+                recent_so_qty = sale["Qty"]
+                recent_so_date = sale["OrderDate"]
+                recent_unit_price = sale["UnitPrice"]
+                break
+
+    result["RecentSOQty"] = int(recent_so_qty)
+    result["RecentSODate"] = recent_so_date
+    result["RecentUnitPrice"] = round(recent_unit_price, 2)
+    result["SQLCost"] = round(avg_cost_all_revs, 2)  # Moved from above
+    result["recentSTDcost"] = round(recent_std_cost, 2)  # Moved from above
+
+    # Calculated business metrics
+    potential_revenue = rfq_qty * recent_unit_price
+    result["PotentialRevenue"] = round(potential_revenue, 2)
+
+    # Calculate estimated margin as 1 - (SQLCost / recent unit price)
+    estimated_margin = 0
+    if recent_unit_price > 0:
+        estimated_margin = 1 - (avg_cost_all_revs / recent_unit_price)
+    result["estimatedmargin"] = round(estimated_margin, 2)
+
+    # Risk assessments
+    # Define risk thresholds
+    potential_thresholds = [1000, 10000, 50000]  # New thresholds
+    avg_annual_thresholds = [10000, 50000, 250000]   # New thresholds
+
+    # Determine risk by potential revenue
+    if potential_revenue < potential_thresholds[0]:
+        risk_by_potential = "Low"
+    elif potential_revenue < potential_thresholds[1]:
+        risk_by_potential = "Medium"
+    elif potential_revenue < potential_thresholds[2]:
+        risk_by_potential = "High"
+    else:
+        risk_by_potential = "Very High"
+
+    # Determine risk by average annual revenue
+    if avg_annual_revenue < avg_annual_thresholds[0]:
+        risk_by_avg_annual = "Low"
+    elif avg_annual_revenue < avg_annual_thresholds[1]:
+        risk_by_avg_annual = "Medium"
+    elif avg_annual_revenue < avg_annual_thresholds[2]:
+        risk_by_avg_annual = "High"
+    else:
+        risk_by_avg_annual = "Very High"
+
+    result["RiskByPotential"] = risk_by_potential
+    result["RiskByAvgAnnual"] = risk_by_avg_annual
+
+    # Round all numeric values in the result dictionary to 2 decimal places
+    for key, value in result.items():
+        if isinstance(value, float):
+            result[key] = round(value, 2)
+
+    return result
+
+def generate_part_summary(engine, part_number, csv_data=None):
     """
     Generate a detailed summary for a specific part number.
 
@@ -379,47 +593,29 @@ def generate_part_summary(engine, part_number):
     Args:
         engine (sqlalchemy.engine.Engine): Database connection engine
         part_number (str): The part number to generate summary for
+        csv_data (pandas.DataFrame, optional): DataFrame containing RFQ data
 
     Returns:
         str: Formatted summary text for the part
     """
-    # Query manufacturing history for this part
-    manu_df = query_part_manufacturing_history(engine, [part_number])
-    job_count = len(manu_df) if not manu_df.empty else 0
+    # Get the detailed summary dictionary
+    summary_dict = generate_part_summary_dict(engine, part_number, csv_data)
 
-    # Query cost information for this part
-    cost_df = query_part_average_cost(engine, [part_number])
-    avg_cost = cost_df['Average_Cost'].iloc[0] if not cost_df.empty and not cost_df['Average_Cost'].isna().all() else 0
+    # Format the sales history for display
+    sales_history = "OrderDate\tOrderedQty\tSalesOrderNumber\tUnitPrice\n"
+    for sale in summary_dict["RecentSalesOrders"]:
+        order_date = sale["OrderDate"] if sale["OrderDate"] else "N/A"
+        ordered_qty = sale["Qty"]
+        sales_order = sale["SONumber"] if sale["SONumber"] else "N/A"
+        unit_price = sale["UnitPrice"]
 
-    # Query sales history for this part
-    sales_df = query_part_sales_history(engine, [part_number])
-    sales_count = len(sales_df) if not sales_df.empty else 0
-
-    # Format the sales history for display (last 5 orders)
-    sales_history = ""
-    if not sales_df.empty:
-        # Sort by OrderDate descending to get the most recent orders
-        sales_df = sales_df.sort_values('OrderDate', ascending=False)
-        # Take the first 5 rows
-        recent_sales = sales_df.head(5)
-
-        # Create a header for the sales history table
-        sales_history = "OrderDate\tOrderedQty\tSalesOrderNumber\tUnitPrice\n"
-
-        # Add each row to the sales history
-        for _, row in recent_sales.iterrows():
-            order_date = row['OrderDate'].strftime('%m/%d/%Y') if pd.notna(row['OrderDate']) else 'N/A'
-            ordered_qty = int(row['OrderedQty']) if pd.notna(row['OrderedQty']) else 0
-            sales_order = row['SalesOrderNumber'] if pd.notna(row['SalesOrderNumber']) else 'N/A'
-            unit_price = row['UnitPrice'] if pd.notna(row['UnitPrice']) else 0
-
-            sales_history += f"{order_date}\t{ordered_qty}\t\t{sales_order}\t\t\t{unit_price}\n"
+        sales_history += f"{order_date}\t{ordered_qty}\t\t{sales_order}\t\t\t{unit_price:.2f}\n"
 
     # Format the summary text
     summary = f"""
-Part # {part_number}
-Athena has built this part {job_count} times in the past 5 years for an avg cost of ${avg_cost:.2f}
-the previous 5 sales orders (out of {sales_count} total SOs) were:
+Part # {summary_dict["PartNumber"]}
+Athena has built this part {summary_dict["TotalBuilds"]} times in the past 5 years for an avg cost of ${summary_dict["SQLCost"]:.2f}
+the previous 5 sales orders (out of {len(summary_dict["RecentSalesOrders"])} total SOs) were:
 {sales_history}
 """
     return summary
@@ -489,7 +685,7 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Check part manufacturing and sales history')
     parser.add_argument('csv_file', nargs='?', 
-                        default=os.path.join('..', 'data', 'quote_items_7900_7950_complete.csv'),
+                        default=os.path.join('..', 'data', 'quote_items_7000_8067_complete.csv'),
                         help='Path to CSV file containing part numbers')
     parser.add_argument('--column', '-c', dest='part_column', default='part_number',
                         help='Name of the column containing part numbers (default: part_number)')
@@ -498,7 +694,11 @@ def main():
     parser.add_argument('--years', '-y', type=int, default=5,
                         help='Number of years of history to retrieve (default: 5)')
     parser.add_argument('--part', '-p', dest='part_number',
-                        help='Generate detailed summary for a specific part number')
+                        help='Generate detailed summary for a specific part number (use with --json for comprehensive metrics)')
+    parser.add_argument('--json', '-j', action='store_true',
+                        help='Output part summary as JSON (only with --part)')
+    parser.add_argument('--batch', '-b', type=int, default=0,
+                        help='Process parts in batches of specified size (default: process all at once)')
     args = parser.parse_args()
 
     # Set output path if not specified
@@ -529,16 +729,72 @@ def main():
         # Check if a specific part number was requested
         if args.part_number:
             print(f"\nGenerating detailed summary for part {args.part_number}...")
-            summary = generate_part_summary(engine, args.part_number)
-            print(summary)
-            logging.info(f"✅ Part summary generated for {args.part_number}")
+
+            # Load CSV data for RFQ information
+            csv_data = None
+            try:
+                csv_data = pd.read_csv(args.csv_file)
+            except Exception as e:
+                logging.warning(f"Could not load CSV data for RFQ information: {e}")
+                print(f"\n⚠️ Warning: Could not load CSV data for RFQ information: {e}")
+
+            if args.json:
+                # Generate and output JSON summary
+                summary_dict = generate_part_summary_dict(engine, args.part_number, csv_data)
+                import json
+                json_summary = json.dumps(summary_dict, indent=2, default=str)
+                print(json_summary)
+
+                # Save JSON to file
+                output_dir = os.path.join('..', 'output')
+                os.makedirs(output_dir, exist_ok=True)
+                json_file = os.path.join(output_dir, f"{args.part_number}_summary.json")
+                with open(json_file, 'w') as f:
+                    f.write(json_summary)
+                logging.info(f"✅ JSON part summary generated for {args.part_number} and saved to {json_file}")
+                print(f"\n✅ JSON summary saved to '{json_file}'")
+            else:
+                # Generate and output text summary
+                summary = generate_part_summary(engine, args.part_number, csv_data)
+                print(summary)
+                logging.info(f"✅ Part summary generated for {args.part_number}")
+
             return 0
 
         # Query database for part history
         print("\nQuerying database for part history...")
-        manu_df = query_part_manufacturing_history(engine, part_numbers)
-        sales_df = query_part_sales_history(engine, part_numbers)
-        cost_df = query_part_average_cost(engine, part_numbers)
+
+        # Process parts in batches if batch size is specified
+        if args.batch > 0:
+            print(f"Processing parts in batches of {args.batch}...")
+            # Divide parts into batches
+            batches = list(chunk(part_numbers, args.batch))
+
+            # Initialize empty DataFrames for results
+            manu_df = pd.DataFrame()
+            sales_df = pd.DataFrame()
+            cost_df = pd.DataFrame()
+
+            # Process each batch
+            for i, batch in enumerate(batches):
+                print(f"\nProcessing batch {i+1} of {len(batches)} ({len(batch)} parts)...")
+
+                # Query database for this batch
+                batch_manu_df = query_part_manufacturing_history(engine, batch)
+                batch_sales_df = query_part_sales_history(engine, batch)
+                batch_cost_df = query_part_average_cost(engine, batch)
+
+                # Combine results
+                manu_df = pd.concat([manu_df, batch_manu_df], ignore_index=True) if not batch_manu_df.empty else manu_df
+                sales_df = pd.concat([sales_df, batch_sales_df], ignore_index=True) if not batch_sales_df.empty else sales_df
+                cost_df = pd.concat([cost_df, batch_cost_df], ignore_index=True) if not batch_cost_df.empty else cost_df
+
+                print(f"Batch {i+1} complete. Found {len(batch_manu_df)} manufacturing records, {len(batch_sales_df)} sales records, and {len(batch_cost_df)} cost records.")
+        else:
+            # Process all parts at once (original behavior)
+            manu_df = query_part_manufacturing_history(engine, part_numbers)
+            sales_df = query_part_sales_history(engine, part_numbers)
+            cost_df = query_part_average_cost(engine, part_numbers)
 
         # Save results
         out_file = save_results(manu_df, sales_df, cost_df, args.output_path)

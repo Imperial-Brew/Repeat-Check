@@ -95,6 +95,34 @@ python main.py --no-log-file
 | `--log-level` | `-l` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `--no-log-file` | | | Disable logging to file |
 
+## Contributing
+
+We welcome contributions to improve this project! Here's how you can help:
+
+### Reporting Issues
+
+If you encounter a bug, have a feature request, or want to suggest an improvement, please use our GitHub Issues:
+
+1. Go to the [Issues](https://github.com/yourusername/Repeat-Check/issues) tab
+2. Click "New Issue"
+3. Choose the appropriate template:
+   - Bug Report: For reporting errors or unexpected behavior
+   - Feature Request: For suggesting new functionality
+   - Improvement: For suggesting enhancements to existing features
+4. Fill out the template with as much detail as possible
+5. Submit the issue
+
+### Pull Requests
+
+If you'd like to contribute code:
+
+1. Fork the repository
+2. Create a new branch for your feature or bugfix
+3. Make your changes
+4. Submit a pull request with a clear description of the changes
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for more detailed guidelines.
+
 ## License
 
 This project is proprietary and confidential.

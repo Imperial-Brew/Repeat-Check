@@ -1,0 +1,65 @@
+{
+  "PartNumber": "0020-48796",
+  "CurrentRevision": "04 ",
+  "TotalBuilds": 35,
+  "BuildsByRevision": {
+    "002": 18,
+    "03 ": 8,
+    "NS ": 6,
+    "04 ": 3
+  },
+  "AvgCostAllRevs": NaN,
+  "AvgCostCurrentRev": 26.025286749999996,
+  "RecentUnitCost": 32.810444,
+  "RecentSalesOrders": [
+    {
+      "OrderDate": "2022-12-19",
+      "Qty": 1,
+      "SONumber": "050259",
+      "TotalValue": 0.0
+    },
+    {
+      "OrderDate": "2022-11-08",
+      "Qty": 1,
+      "SONumber": "049958",
+      "TotalValue": 0.0
+    },
+    {
+      "OrderDate": "2022-06-16",
+      "Qty": 42,
+      "SONumber": "048659",
+      "TotalValue": 1716.12
+    },
+    {
+      "OrderDate": "2022-06-16",
+      "Qty": 42,
+      "SONumber": "048659",
+      "TotalValue": 1716.12
+    },
+    {
+      "OrderDate": "2022-06-16",
+      "Qty": 8,
+      "SONumber": "048659",
+      "TotalValue": 326.88
+    }
+  ],
+  "AnnualRevenue": {
+    "2020": 11680.0,
+    "2021": 76854.4,
+    "2022": 3759.12,
+    "2023": 0.0,
+    "2024": 0.0,
+    "2025": 0.0
+  },
+  "AvgAnnualRevenue": 15382.253333333332,
+  "RFQQty": 100,
+  "RecentTotalValue": 1716.12,
+  "RecentSOQty": 42,
+  "RecentSODate": "2022-06-16",
+  "RecentUnitPrice": 40.86,
+  "PotentialRevenue": 4086.0,
+  "UnitMargin": 8.049556000000003,
+  "TotalMargin": 804.9556000000002,
+  "RiskByPotential": "Low",
+  "RiskByAvgAnnual": "Medium"
+}

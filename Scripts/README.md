@@ -39,7 +39,7 @@ python part_history_checker.py path\to\your\input.csv
 Additional command-line options:
 ```
 python part_history_checker.py --help
-usage: part_history_checker.py [-h] [--column PART_COLUMN] [--output OUTPUT_PATH] [--years YEARS] [--part PART_NUMBER] [csv_file]
+usage: part_history_checker.py [-h] [--column PART_COLUMN] [--output OUTPUT_PATH] [--years YEARS] [--part PART_NUMBER] [--json] [--batch BATCH_SIZE] [csv_file]
 
 Check part manufacturing and sales history
 
@@ -56,11 +56,24 @@ options:
                         Number of years of history to retrieve (default: 5)
   --part PART_NUMBER, -p PART_NUMBER
                         Generate detailed summary for a specific part number
+  --json, -j            Output part summary as JSON (only with --part)
+  --batch BATCH_SIZE, -b BATCH_SIZE
+                        Process parts in batches of specified size (default: process all at once)
 ```
 
 Generate a detailed summary for a specific part:
 ```
 python part_history_checker.py --part "0020-48796"
+```
+
+Generate a detailed summary in JSON format with comprehensive metrics (saves to a file):
+```
+python part_history_checker.py --part "0020-48796" --json
+```
+
+Process parts in batches to manage memory usage and improve performance:
+```
+python part_history_checker.py --batch 5
 ```
 
 ## Output
@@ -93,6 +106,61 @@ OrderDate	OrderedQty	SalesOrderNumber	UnitPrice
 ```
 
 This format provides a quick overview of the part's manufacturing history, average cost, and recent sales orders.
+
+### JSON Summary (--part --json options)
+
+When run with both the `--part` and `--json` options, the script outputs a comprehensive JSON object with detailed metrics and saves it to a file in the `output` directory (e.g., `output/0020-48796_summary.json`):
+
+```json
+{
+  "PartNumber": "0020-48796",
+  "CurrentRevision": "04",
+  "TotalBuilds": 23,
+  "BuildsByRevision": {
+    "04": 18,
+    "03": 3,
+    "NS": 2
+  },
+  "AvgCostAllRevs": 65.42,
+  "AvgCostCurrentRev": 68.75,
+  "RecentUnitCost": 72.18,
+  "RecentSalesOrders": [
+    {
+      "OrderDate": "2022-12-19",
+      "Qty": 1,
+      "SONumber": "050259",
+      "TotalValue": 0.0
+    },
+    ...
+  ],
+  "AnnualRevenue": {
+    "2020": 1168000.00,
+    "2021": 12043189.60,
+    "2022": 146769.12,
+    "2023": 0.00,
+    "2024": 0.00,
+    "2025": 0.00
+  },
+  "AvgAnnualRevenue": 2226326.45,
+  "RFQQty": 427,
+  "RecentTotalValue": 326.88,
+  "RecentSOQty": 8,
+  "RecentSODate": "2022-06-16",
+  "RecentUnitPrice": 40.86,
+  "PotentialRevenue": 17447.22,
+  "UnitMargin": -31.32,
+  "TotalMargin": -13373.58,
+  "RiskByPotential": "Medium",
+  "RiskByAvgAnnual": "Very High"
+}
+```
+
+This format provides comprehensive data for analysis, including:
+- Basic part information (part number, current revision)
+- Manufacturing metrics (total builds, builds by revision, average costs)
+- Sales information (recent sales orders, annual revenue)
+- RFQ information from the CSV file
+- Calculated business metrics (margins, risk assessments)
 
 ## Database Queries
 
@@ -140,6 +208,8 @@ The script has been enhanced with the following improvements:
    - Added option to specify output file path
    - Added option to configure the number of years of history to retrieve
    - Added option to generate a detailed summary for a specific part number
+   - Added option to output part summary as JSON and save it to a file
+   - Added option to process parts in batches to manage memory usage
 
 4. **Input Validation**
    - Added validation for CSV file existence
@@ -164,6 +234,6 @@ The script has been enhanced with the following improvements:
    - Add forecasting capabilities for future costs
 
 4. **Integration Options**
-   - Add support for exporting to other formats (CSV, JSON, etc.)
+   - Add support for exporting to additional formats (CSV, XML, etc.)
    - Implement API endpoints for integration with other systems
    - Add email notification capabilities for completed reports
