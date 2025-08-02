@@ -19,6 +19,9 @@ Usage:
     For a detailed summary in JSON format:
     python part_history_checker.py --part "0020-48796" --json
 
+    For saving JSON summaries for all parts:
+    python part_history_checker.py --json
+
     For processing parts in batches:
     python part_history_checker.py --batch 5
 
@@ -29,17 +32,26 @@ Output:
       - Sales History: Details of sales orders for the parts
       - Cost Analysis: Cost information including standard and average costs
 
-    - When using --part option: Console output with a detailed summary showing:
-      - Number of times the part has been built in the past 5 years
-      - Average manufacturing cost
-      - Previous 5 sales orders with details (date, quantity, order number, price)
+    - When using --part option: 
+      - Console output with a detailed summary showing:
+        - Number of times the part has been built in the past 5 years
+        - Average manufacturing cost
+        - Previous 5 sales orders with details (date, quantity, order number, price)
+      - A JSON file is also saved to the output directory with the name "{part_number}_summary.json"
 
-    - When using --part with --json option: JSON output with comprehensive metrics:
-      - Basic part information (part number, current revision)
-      - Manufacturing metrics (total builds, builds by revision, average costs)
-      - Sales information (recent sales orders, annual revenue)
-      - RFQ information from the CSV file
-      - Calculated business metrics (margins, risk assessments)
+    - When using --part with --json option: 
+      - JSON output to console with comprehensive metrics
+      - A JSON file is saved to the output directory with the name "{part_number}_summary.json"
+      - Both console output and JSON file include:
+        - Basic part information (part number, current revision)
+        - Manufacturing metrics (total builds, builds by revision, average costs)
+        - Sales information (recent sales orders, annual revenue)
+        - RFQ information from the CSV file
+        - Calculated business metrics (margins, risk assessments)
+
+    - When using --json without --part option: JSON files for all parts in the output directory:
+      - One JSON file per part with the same comprehensive metrics as above
+      - Files are named "{part_number}_summary.json"
 
 Requirements:
     - .env file with database connection parameters (DB_DRIVER, DB_SERVER, DB_NAME)
@@ -392,7 +404,7 @@ def query_part_average_cost(engine, part_numbers):
         logging.error(f"Average cost query failed: {e}")
         raise
 
-def generate_part_summary_dict(engine, part_number, csv_data=None):
+def generate_part_summary_dict(engine, part_number, csv_data=None, quotes_data=None):
     """
     Generate a detailed summary dictionary for a specific part number.
 
@@ -405,11 +417,13 @@ def generate_part_summary_dict(engine, part_number, csv_data=None):
     Args:
         engine (sqlalchemy.engine.Engine): Database connection engine
         part_number (str): The part number to generate summary for
-        csv_data (pandas.DataFrame, optional): DataFrame containing RFQ data
+        csv_data (pandas.DataFrame, optional): DataFrame containing quote items information
+        quotes_data (pandas.DataFrame, optional): DataFrame containing quote information (due dates, etc.)
 
     Returns:
         dict: Dictionary containing detailed part metrics
     """
+    from datetime import datetime, timedelta
     # Query manufacturing history for this part
     manu_df = query_part_manufacturing_history(engine, [part_number])
 
@@ -422,6 +436,16 @@ def generate_part_summary_dict(engine, part_number, csv_data=None):
     # Get the revision from the CSV file instead of SQL data
     csv_revision = "05"  # Default to 05 as specified in notes.txt
     if csv_data is not None:
+        # Check if the part number exists in the CSV data
+        if part_number in csv_data['part_number'].values:
+            pass  # Part number found, continue with processing
+        else:
+            # Try to find the part number with different formatting
+            # Remove trailing spaces
+            stripped_part_number = part_number.strip()
+            if stripped_part_number in csv_data['part_number'].values:
+                part_number = stripped_part_number
+
         # Filter CSV data for this part number
         part_rows = csv_data[csv_data['part_number'] == part_number]
         if not part_rows.empty and 'revision' in part_rows.columns:
@@ -506,15 +530,98 @@ def generate_part_summary_dict(engine, part_number, csv_data=None):
     avg_annual_revenue = sum(annual_revenue.values()) / 6  # Average over 6 years
     result["AvgAnnualRevenue"] = round(avg_annual_revenue, 2)
 
-    # RFQ quantity
+    # RFQ quantity, due date, and estimator
     rfq_qty = 0
+    quote_number = ""
+    due_date = None
+    estimator = ""
+
     if csv_data is not None:
+        # We already have the correct part_number from the revision check above
         # Filter CSV data for this part number
         part_rows = csv_data[csv_data['part_number'] == part_number]
-        if not part_rows.empty and 'quantity' in part_rows.columns:
-            # Use the first quantity found (or could use max, sum, etc.)
-            rfq_qty = int(part_rows['quantity'].iloc[0])
+        if not part_rows.empty:
+            # Extract quantity if available
+            if 'quantity' in part_rows.columns:
+                # Use the first quantity found (or could use max, sum, etc.)
+                rfq_qty = int(part_rows['quantity'].iloc[0])
+
+            # Extract quote number if available
+            if 'quote_number' in part_rows.columns:
+                quote_number = part_rows['quote_number'].iloc[0]
+                # Determine estimator based on workflow_status
+                if 'workflow_status' in part_rows.columns:
+                    workflow_status = part_rows['workflow_status'].iloc[0]
+                    # Map workflow status to estimators
+                    status_to_estimator = {
+                        'draft': 'Dustin Drab',
+                        'in_progress': 'John Smith',  # Replace with actual estimator name
+                        'no_quote': 'Jane Doe',       # Replace with actual estimator name
+                        'quoted': 'Bob Johnson',      # Replace with actual estimator name
+                        'won': 'Alice Brown',         # Replace with actual estimator name
+                        'lost': 'Charlie Davis',      # Replace with actual estimator name
+                        'not_started': 'Dustin Drab'  # Add the not_started status
+                    }
+                    # Get estimator from mapping or use a default
+                    if pd.notna(workflow_status) and workflow_status in status_to_estimator:
+                        estimator = status_to_estimator[workflow_status]
+
+    # Get due date from quotes data if available
+    if quotes_data is not None and quote_number:
+        # Log the quote_number for debugging
+        logging.info(f"generate_part_summary_dict: Looking for quote_number: {quote_number}, type: {type(quote_number)}")
+
+        # Log the first few quote numbers from quotes_data for comparison
+        if not quotes_data.empty:
+            sample_quotes = quotes_data['quote_number'].head(5).tolist()
+            logging.info(f"generate_part_summary_dict: Sample quote numbers from quotes_data: {sample_quotes}, types: {[type(q) for q in sample_quotes]}")
+
+        # Convert quote_number to integer and find matching row in quotes_data
+        # First, convert the float to an integer by removing the decimal part
+        try:
+            int_quote_number = int(float(quote_number))
+            # Find rows where quote_number equals int_quote_number
+            quote_rows = quotes_data[quotes_data['quote_number'] == int_quote_number]
+            logging.info(f"generate_part_summary_dict: Converted quote_number from {quote_number} to {int_quote_number}")
+        except (ValueError, TypeError):
+            # If conversion fails, fall back to string comparison
+            str_quote_number = str(quote_number).strip()
+            quote_rows = quotes_data[quotes_data['quote_number'].astype(str).str.strip() == str_quote_number]
+            logging.info(f"generate_part_summary_dict: Using string comparison for quote_number: {str_quote_number}")
+
+        # Log the number of matching rows found
+        logging.info(f"generate_part_summary_dict: Found {len(quote_rows)} matching rows in quotes_data")
+
+        if not quote_rows.empty:
+            # Extract due date if available
+            if 'due_date' in quote_rows.columns:
+                due_date_raw = quote_rows['due_date'].iloc[0]
+                if pd.notna(due_date_raw):
+                    # Parse the ISO format date string and convert to YYYY-MM-DD format
+                    try:
+                        # Handle ISO format with timezone (e.g., "2025-02-12T18:00:00+00:00")
+                        from dateutil import parser
+                        due_date_obj = parser.parse(due_date_raw)
+                        due_date = due_date_obj.strftime('%Y-%m-%d')
+                    except Exception as e:
+                        logging.warning(f"Failed to parse due date '{due_date_raw}': {e}")
+                        # Fallback to lead_time calculation if due_date parsing fails
+                        if csv_data is not None and 'lead_time' in part_rows.columns:
+                            lead_time = part_rows['lead_time'].iloc[0]
+                            if pd.notna(lead_time) and lead_time != 0:
+                                current_date = datetime.now()
+                                due_date_obj = current_date + timedelta(days=int(lead_time))
+                                due_date = due_date_obj.strftime('%Y-%m-%d')
+
     result["RFQQty"] = rfq_qty
+    result["Quote #"] = quote_number
+    result["Due Date"] = due_date
+    result["Estimator assigned"] = estimator
+
+    # For backward compatibility with existing code that might expect the old field names
+    # These will be used in the JSON output
+    result["QuoteNumber"] = quote_number
+    result["DueDate"] = due_date
 
     # Recent sales metrics - Find the most recent non-zero unit price
     recent_so_qty = 0
@@ -620,12 +727,12 @@ the previous 5 sales orders (out of {len(summary_dict["RecentSalesOrders"])} tot
 """
     return summary
 
-def save_results(manufacturing_df, sales_df, cost_df, output_path):
+def save_results(manufacturing_df, sales_df, cost_df, output_path, csv_data=None, quotes_data=None):
     """
     Save query results to an Excel file with multiple sheets.
 
     Creates an Excel workbook with four sheets:
-    - Summary: Overview of record counts and unique part counts
+    - Summary: List of all parts with quote info and history flags
     - Manufacturing History: Manufacturing job details (if available)
     - Sales History: Sales order details (if available)
     - Cost Analysis: Cost information (if available)
@@ -635,6 +742,8 @@ def save_results(manufacturing_df, sales_df, cost_df, output_path):
         sales_df (pandas.DataFrame): Sales history data
         cost_df (pandas.DataFrame): Cost analysis data
         output_path (str): Path where the Excel file will be saved
+        csv_data (pandas.DataFrame, optional): CSV data containing quote items information
+        quotes_data (pandas.DataFrame, optional): CSV data containing quote information (due dates, etc.)
 
     Returns:
         str: Path to the saved Excel file
@@ -642,28 +751,180 @@ def save_results(manufacturing_df, sales_df, cost_df, output_path):
     Raises:
         Exception: If there's an error creating or saving the Excel file
     """
+    from datetime import datetime, timedelta
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         logging.info(f"Saving results to {output_path}")
+
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            summary = {
-                'Category': ['Manufacturing History','Sales History','Cost Analysis'],
-                'Records': [
-                    len(manufacturing_df), len(sales_df), len(cost_df)
-                ],
-                'Unique Parts': [
-                    manufacturing_df['PartNumber'].nunique() if not manufacturing_df.empty else 0,
-                    sales_df['PartNumber'].nunique()         if not sales_df.empty         else 0,
-                    cost_df['PartNumber'].nunique()          if not cost_df.empty          else 0,
-                ]
-            }
-            pd.DataFrame(summary).to_excel(writer, sheet_name='Summary', index=False)
+            # Get all unique part numbers from all dataframes
+            all_parts = set()
+            if not manufacturing_df.empty:
+                all_parts.update(manufacturing_df['PartNumber'].unique())
+            if not sales_df.empty:
+                all_parts.update(sales_df['PartNumber'].unique())
+            if not cost_df.empty:
+                all_parts.update(cost_df['PartNumber'].unique())
+
+            # Create summary dataframe with the requested format
+            summary_data = []
+            for part_number in all_parts:
+                # Check if part has manufacturing history
+                has_jo_hist = False
+                if not manufacturing_df.empty:
+                    has_jo_hist = part_number in manufacturing_df['PartNumber'].values
+
+                # Check if part has sales history
+                has_so_hist = False
+                if not sales_df.empty:
+                    has_so_hist = part_number in sales_df['PartNumber'].values
+
+                # Get quote info from CSV files if available
+                quote_number = ""
+                due_date = ""
+                estimator = ""  # No default value, will be assigned from paperless data
+
+                if csv_data is not None:
+                    # Check if the part number exists in the CSV data
+                    if part_number in csv_data['part_number'].values:
+                        pass  # Part number found, continue with processing
+                    else:
+                        # Try to find the part number with different formatting
+                        # Remove trailing spaces
+                        stripped_part_number = part_number.strip()
+                        if stripped_part_number in csv_data['part_number'].values:
+                            part_number = stripped_part_number
+
+                    part_rows = csv_data[csv_data['part_number'] == part_number]
+                    if not part_rows.empty:
+                        # Extract quote number if available
+                        if 'quote_number' in part_rows.columns:
+                            quote_number = part_rows['quote_number'].iloc[0]
+
+                        # Determine estimator based on workflow_status
+                        if 'workflow_status' in part_rows.columns:
+                            workflow_status = part_rows['workflow_status'].iloc[0]
+                            # Map workflow status to estimators
+                            # TODO: Update this mapping with the actual estimator assignments based on your workflow
+                            # Each workflow status should be mapped to the person responsible for quotes in that status
+                            status_to_estimator = {
+                                'draft': 'Dustin Drab',
+                                'in_progress': 'John Smith',  # Replace with actual estimator name
+                                'no_quote': 'Jane Doe',       # Replace with actual estimator name
+                                'quoted': 'Bob Johnson',      # Replace with actual estimator name
+                                'won': 'Alice Brown',         # Replace with actual estimator name
+                                'lost': 'Charlie Davis',      # Replace with actual estimator name
+                                'not_started': 'Dustin Drab'  # Add the not_started status
+                            }
+                            # Get estimator from mapping or use a default
+                            if pd.notna(workflow_status) and workflow_status in status_to_estimator:
+                                estimator = status_to_estimator[workflow_status]
+
+                # Get due date from quotes data if available
+                if quotes_data is not None and quote_number:
+                    # Log the quote_number for debugging
+                    logging.info(f"Looking for quote_number: {quote_number}, type: {type(quote_number)}")
+
+                    # Log the first few quote numbers from quotes_data for comparison
+                    if not quotes_data.empty:
+                        sample_quotes = quotes_data['quote_number'].head(5).tolist()
+                        logging.info(f"Sample quote numbers from quotes_data: {sample_quotes}, types: {[type(q) for q in sample_quotes]}")
+
+                    # Convert quote_number to integer and find matching row in quotes_data
+                    # First, convert the float to an integer by removing the decimal part
+                    try:
+                        int_quote_number = int(float(quote_number))
+                        # Find rows where quote_number equals int_quote_number
+                        quote_rows = quotes_data[quotes_data['quote_number'] == int_quote_number]
+                        logging.info(f"save_results: Converted quote_number from {quote_number} to {int_quote_number}")
+                    except (ValueError, TypeError):
+                        # If conversion fails, fall back to string comparison
+                        str_quote_number = str(quote_number).strip()
+                        quote_rows = quotes_data[quotes_data['quote_number'].astype(str).str.strip() == str_quote_number]
+                        logging.info(f"save_results: Using string comparison for quote_number: {str_quote_number}")
+
+                    # Log the number of matching rows found
+                    logging.info(f"Found {len(quote_rows)} matching rows in quotes_data")
+
+                    if not quote_rows.empty:
+                        # Extract due date if available
+                        if 'due_date' in quote_rows.columns:
+                            due_date_raw = quote_rows['due_date'].iloc[0]
+                            if pd.notna(due_date_raw):
+                                # Parse the ISO format date string and convert to YYYY-MM-DD format
+                                try:
+                                    # Handle ISO format with timezone (e.g., "2025-02-12T18:00:00+00:00")
+                                    from dateutil import parser
+                                    due_date_obj = parser.parse(due_date_raw)
+                                    due_date = due_date_obj.strftime('%Y-%m-%d')
+                                except Exception as e:
+                                    logging.warning(f"Failed to parse due date '{due_date_raw}': {e}")
+                                    # Fallback to lead_time calculation if due_date parsing fails
+                                    if csv_data is not None and 'lead_time' in part_rows.columns:
+                                        lead_time = part_rows['lead_time'].iloc[0]
+                                        if pd.notna(lead_time) and lead_time != 0:
+                                            current_date = datetime.now()
+                                            due_date_obj = current_date + timedelta(days=int(lead_time))
+                                            due_date = due_date_obj.strftime('%Y-%m-%d')
+
+                summary_data.append({
+                    'PartNumber': part_number,
+                    'Quote #': quote_number,
+                    'Due Date': due_date,
+                    'Estimator assigned': estimator,
+                    'SO Hist': 'TRUE' if has_so_hist else 'FALSE',
+                    'JO Hist': 'TRUE' if has_jo_hist else 'FALSE'
+                })
+
+                # Log the summary data for debugging
+                logging.info(f"Summary data for part {part_number}: {summary_data[-1]}")
+
+            # Create and save the summary dataframe
+            summary_df = pd.DataFrame(summary_data)
+
+            # Log the summary dataframe for debugging
+            logging.info(f"Summary dataframe columns: {summary_df.columns.tolist()}")
+            logging.info(f"Summary dataframe shape: {summary_df.shape}")
+            if not summary_df.empty:
+                logging.info(f"First row of summary dataframe: {summary_df.iloc[0].to_dict()}")
+
+            # Ensure column names are correct
+            if 'Quote #' not in summary_df.columns:
+                logging.warning("'Quote #' column is missing from summary dataframe!")
+            if 'Due Date' not in summary_df.columns:
+                logging.warning("'Due Date' column is missing from summary dataframe!")
+            if 'Estimator assigned' not in summary_df.columns:
+                logging.warning("'Estimator assigned' column is missing from summary dataframe!")
+
+            # Explicitly set the column order to ensure all columns are included
+            column_order = ['PartNumber', 'Quote #', 'Due Date', 'Estimator assigned', 'SO Hist', 'JO Hist']
+
+            # Reorder columns if they exist
+            existing_columns = [col for col in column_order if col in summary_df.columns]
+            missing_columns = [col for col in column_order if col not in summary_df.columns]
+
+            if missing_columns:
+                logging.warning(f"Missing columns in summary dataframe: {missing_columns}")
+                # Add missing columns with empty values
+                for col in missing_columns:
+                    summary_df[col] = ""
+
+            # Reorder columns to match column_order
+            summary_df = summary_df[column_order]
+
+            # Log the final dataframe columns
+            logging.info(f"Final summary dataframe columns: {summary_df.columns.tolist()}")
+
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+
+            # Save the other sheets as before
             if not manufacturing_df.empty:
                 manufacturing_df.to_excel(writer, sheet_name='Manufacturing History', index=False)
             if not sales_df.empty:
                 sales_df.to_excel(writer, sheet_name='Sales History', index=False)
             if not cost_df.empty:
                 cost_df.to_excel(writer, sheet_name='Cost Analysis', index=False)
+
         logging.info("Results successfully saved")
         return output_path
     except Exception as e:
@@ -694,9 +955,9 @@ def main():
     parser.add_argument('--years', '-y', type=int, default=5,
                         help='Number of years of history to retrieve (default: 5)')
     parser.add_argument('--part', '-p', dest='part_number',
-                        help='Generate detailed summary for a specific part number (use with --json for comprehensive metrics)')
+                        help='Generate detailed summary for a specific part number and save to JSON file (use with --json for JSON console output)')
     parser.add_argument('--json', '-j', action='store_true',
-                        help='Output part summary as JSON (only with --part)')
+                        help='Output part summary as JSON to console (with --part) or save JSON files for all parts (without --part)')
     parser.add_argument('--batch', '-b', type=int, default=0,
                         help='Process parts in batches of specified size (default: process all at once)')
     args = parser.parse_args()
@@ -738,25 +999,46 @@ def main():
                 logging.warning(f"Could not load CSV data for RFQ information: {e}")
                 print(f"\n⚠️ Warning: Could not load CSV data for RFQ information: {e}")
 
-            if args.json:
-                # Generate and output JSON summary
-                summary_dict = generate_part_summary_dict(engine, args.part_number, csv_data)
-                import json
-                json_summary = json.dumps(summary_dict, indent=2, default=str)
-                print(json_summary)
+            # Load quotes CSV data for additional quote information
+            quotes_data = None
+            quotes_file = os.path.join(os.path.dirname(args.csv_file), 'quotes_7000_8067_complete.csv')
+            try:
+                if os.path.exists(quotes_file):
+                    quotes_data = pd.read_csv(quotes_file)
+                    logging.info(f"Loaded quotes data from {quotes_file}")
+                    # Log the shape and columns of the quotes_data DataFrame
+                    logging.info(f"Quotes data shape: {quotes_data.shape}, columns: {quotes_data.columns.tolist()}")
+                    # Log the data types of the columns
+                    logging.info(f"Quotes data dtypes: {quotes_data.dtypes}")
+                else:
+                    logging.warning(f"Quotes CSV file not found: {quotes_file}")
+                    print(f"\n⚠️ Warning: Quotes CSV file not found: {quotes_file}")
+            except Exception as e:
+                logging.warning(f"Could not load quotes data: {e}")
+                print(f"\n⚠️ Warning: Could not load quotes data: {e}")
 
-                # Save JSON to file
-                output_dir = os.path.join('..', 'output')
-                os.makedirs(output_dir, exist_ok=True)
-                json_file = os.path.join(output_dir, f"{args.part_number}_summary.json")
-                with open(json_file, 'w') as f:
-                    f.write(json_summary)
-                logging.info(f"✅ JSON part summary generated for {args.part_number} and saved to {json_file}")
+            # Generate summary dictionary for the part
+            summary_dict = generate_part_summary_dict(engine, args.part_number, csv_data, quotes_data)
+            import json
+
+            # Always save JSON to file, regardless of --json flag
+            output_dir = os.path.join('..', 'output')
+            os.makedirs(output_dir, exist_ok=True)
+            json_file = os.path.join(output_dir, f"{args.part_number}_summary.json")
+            json_summary = json.dumps(summary_dict, indent=2, default=str)
+            with open(json_file, 'w') as f:
+                f.write(json_summary)
+            logging.info(f"✅ JSON part summary generated for {args.part_number} and saved to {json_file}")
+
+            if args.json:
+                # Print JSON to console if --json flag is provided
+                print(json_summary)
                 print(f"\n✅ JSON summary saved to '{json_file}'")
             else:
                 # Generate and output text summary
                 summary = generate_part_summary(engine, args.part_number, csv_data)
                 print(summary)
+                print(f"\n✅ JSON summary also saved to '{json_file}'")
                 logging.info(f"✅ Part summary generated for {args.part_number}")
 
             return 0
@@ -796,8 +1078,75 @@ def main():
             sales_df = query_part_sales_history(engine, part_numbers)
             cost_df = query_part_average_cost(engine, part_numbers)
 
-        # Save results
-        out_file = save_results(manu_df, sales_df, cost_df, args.output_path)
+        # Load CSV data for RFQ information
+        csv_data = None
+        try:
+            csv_data = pd.read_csv(args.csv_file)
+            logging.info(f"CSV data columns: {csv_data.columns.tolist()}")
+            logging.info(f"CSV data shape: {csv_data.shape}")
+            if 'workflow_status' in csv_data.columns:
+                logging.info(f"Unique workflow_status values: {csv_data['workflow_status'].unique().tolist()}")
+            else:
+                logging.warning("workflow_status column not found in CSV data")
+        except Exception as e:
+            logging.warning(f"Could not load CSV data for RFQ information: {e}")
+            print(f"\n⚠️ Warning: Could not load CSV data for RFQ information: {e}")
+
+        # Load quotes CSV data for additional quote information
+        quotes_data = None
+        quotes_file = os.path.join(os.path.dirname(args.csv_file), 'quotes_7000_8067_complete.csv')
+        try:
+            if os.path.exists(quotes_file):
+                quotes_data = pd.read_csv(quotes_file)
+                logging.info(f"Loaded quotes data from {quotes_file}")
+                # Log the shape and columns of the quotes_data DataFrame
+                logging.info(f"Quotes data shape: {quotes_data.shape}, columns: {quotes_data.columns.tolist()}")
+                # Log the data types of the columns
+                logging.info(f"Quotes data dtypes: {quotes_data.dtypes}")
+            else:
+                logging.warning(f"Quotes CSV file not found: {quotes_file}")
+                print(f"\n⚠️ Warning: Quotes CSV file not found: {quotes_file}")
+        except Exception as e:
+            logging.warning(f"Could not load quotes data: {e}")
+            print(f"\n⚠️ Warning: Could not load quotes data: {e}")
+
+        # Save results to Excel
+        out_file = save_results(manu_df, sales_df, cost_df, args.output_path, csv_data, quotes_data)
+
+        # Save JSON for each part if --json flag is provided
+        if args.json:
+            print("\nGenerating JSON summaries for all parts...")
+            output_dir = os.path.join('..', 'output')
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Get unique part numbers from all dataframes
+            all_parts = set()
+            if not manu_df.empty:
+                all_parts.update(manu_df['PartNumber'].unique())
+            if not sales_df.empty:
+                all_parts.update(sales_df['PartNumber'].unique())
+            if not cost_df.empty:
+                all_parts.update(cost_df['PartNumber'].unique())
+
+            # Generate JSON for each part
+            import json
+            json_files_count = 0
+            for part_number in tqdm(all_parts, desc="Generating JSON files"):
+                try:
+                    summary_dict = generate_part_summary_dict(engine, part_number, csv_data, quotes_data)
+                    json_summary = json.dumps(summary_dict, indent=2, default=str)
+
+                    # Save JSON to file
+                    json_file = os.path.join(output_dir, f"{part_number}_summary.json")
+                    with open(json_file, 'w') as f:
+                        f.write(json_summary)
+                    json_files_count += 1
+                except Exception as e:
+                    logging.error(f"Failed to generate JSON for part {part_number}: {e}")
+
+            logging.info(f"✅ Generated JSON summaries for {json_files_count} parts")
+            print(f"\n✅ Generated JSON summaries for {json_files_count} parts in '{output_dir}'")
+
         logging.info("✅ Process completed successfully")
         print(f"\n✅ Done! Output saved to '{out_file}'")
         return 0

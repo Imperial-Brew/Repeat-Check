@@ -1,0 +1,35 @@
+select
+    fpartno as "Part Number",
+    frev as "Revision",
+    fdescript as "Description",
+    fmeasure as "Unit of Measure",
+    fstdcost as "Standard Cost",
+    flastcost as "Last Cost",
+    freordqty as "Reorder Quantity",
+    fleadtime as "Lead Time",
+    fsource as "Source",
+    fcomment as "Comment",
+    fstdmemo as "Standard Memo",
+    fonhand as "On Hand",
+    FONORDER as "On Order",
+    fbook as "Booked",
+    flastiss as "Last issue",
+    flastrcpt as "Last receipt",
+    fytdiss as "YTD Issue",
+    fytdrcpt as "YTD Receipt",
+    flocate1 as "Location",
+    fbin1 as "Bin",
+    fgroup as "Group",
+    fprodcl as "Product Class"
+
+from Inmast
+where
+    fpartno = 'CRS-12GAX48X120' OR
+    fpartno = 'PEM-SS-032-1ZI' OR
+    fpartno = 'PEM-SMPS-632'
+
+
+
+
+
+

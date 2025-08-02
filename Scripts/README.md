@@ -40,7 +40,7 @@ Additional command-line options:
 ```
 python part_history_checker.py --help
 usage: part_history_checker.py [-h] [--column PART_COLUMN] [--output OUTPUT_PATH] [--years YEARS] [--part PART_NUMBER] [--json] [--batch BATCH_SIZE] [csv_file]
-
+python part_history_checker.py --part 0041-10751
 Check part manufacturing and sales history
 
 positional arguments:

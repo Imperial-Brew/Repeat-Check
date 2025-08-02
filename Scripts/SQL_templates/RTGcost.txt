@@ -1,0 +1,23 @@
+select
+    foperno as op#,
+    fpartno as partno,
+    fcpartrev as rev,
+    foperqty as qty,
+    fpro_id as workcenter,
+    fsetuptime as setuptime,
+    fuprodtime as productiontimeEA,
+    fulabcost as laborcostHR,
+    fuovrhdcos as overheadcostHR,
+    fulabcost + fuovrhdcos as WorkcenterHR,
+    fsetuptime * (fulabcost + fuovrhdcos) as setupcost,
+    fuprodtime * (fulabcost + fuovrhdcos) as productioncost,
+    fusubcost as subcontrcostEA,
+    (((fuprodtime * (fulabcost + fuovrhdcos)) + fusubcost) * foperqty) + (fsetuptime * (fulabcost + fuovrhdcos)) as totalcost,
+    ((((fuprodtime * (fulabcost + fuovrhdcos)) + fusubcost) * foperqty) + (fsetuptime * (fulabcost + fuovrhdcos))) / foperqty as unitcost,
+    fothrcost as othercostEA,
+    fopermemo as operationmemo
+from INRTGS
+where
+    fpartno = '0042-65918' AND fcpartrev = '02'
+ORDER BY foperno ASC
+
