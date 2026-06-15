@@ -68,7 +68,9 @@ python main.py
 Specify custom input and output files:
 ```
 python main.py --input path\to\your\input.csv --output path\to\your\output.csv
+python main.py --input C:\Users\drab.dustin\Downloads\quote_8238.csv --output C:\Users\drab.dustin\Downloads\output.csv
 ```
+python scripts\part_history_checker.py C:\Users\drab.dustin\Downloads\quote_8238.csv
 
 Specify a different column name for part numbers:
 ```

@@ -3,7 +3,7 @@ import pandas as pd
 import pyodbc
 import logging
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 def connect_to_database():
     """Establish connection to the M2M database using Windows authentication.
@@ -101,11 +101,14 @@ def query_part_data(engine, part_numbers):
             WHERE i.FPARTNO IN ({part_list})
             """
 
-            # Use pandas read_sql with SQLAlchemy connection
-            with engine.connect() as connection:
+            # Use pandas read_sql with raw DBAPI connection
+            connection = engine.raw_connection()
+            try:
                 chunk_df = pd.read_sql(query, connection)
                 logging.info(f"Query returned {len(chunk_df)} records")
                 results.append(chunk_df)
+            finally:
+                connection.close()
 
         if results:
             final_df = pd.concat(results, ignore_index=True)

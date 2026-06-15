@@ -729,9 +729,10 @@ the previous 5 sales orders (out of {len(summary_dict["RecentSalesOrders"])} tot
 
 def save_results(manufacturing_df, sales_df, cost_df, output_path, csv_data=None, quotes_data=None):
     """
-    Save query results to an Excel file with multiple sheets.
+    Save query results to an Excel or CSV file.
 
-    Creates an Excel workbook with four sheets:
+    If output_path ends in .csv, saves only the summary data to a CSV file.
+    If output_path ends in .xlsx or .xls, creates an Excel workbook with four sheets:
     - Summary: List of all parts with quote info and history flags
     - Manufacturing History: Manufacturing job details (if available)
     - Sales History: Sales order details (if available)
@@ -741,189 +742,199 @@ def save_results(manufacturing_df, sales_df, cost_df, output_path, csv_data=None
         manufacturing_df (pandas.DataFrame): Manufacturing history data
         sales_df (pandas.DataFrame): Sales history data
         cost_df (pandas.DataFrame): Cost analysis data
-        output_path (str): Path where the Excel file will be saved
+        output_path (str): Path where the file will be saved
         csv_data (pandas.DataFrame, optional): CSV data containing quote items information
         quotes_data (pandas.DataFrame, optional): CSV data containing quote information (due dates, etc.)
 
     Returns:
-        str: Path to the saved Excel file
+        str: Path to the saved file
 
     Raises:
-        Exception: If there's an error creating or saving the Excel file
+        Exception: If there's an error creating or saving the file
     """
     from datetime import datetime, timedelta
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         logging.info(f"Saving results to {output_path}")
 
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Get all unique part numbers from all dataframes
-            all_parts = set()
-            if not manufacturing_df.empty:
-                all_parts.update(manufacturing_df['PartNumber'].unique())
-            if not sales_df.empty:
-                all_parts.update(sales_df['PartNumber'].unique())
-            if not cost_df.empty:
-                all_parts.update(cost_df['PartNumber'].unique())
+        # Get all unique part numbers from all dataframes
+        all_parts = set()
+        if not manufacturing_df.empty:
+            all_parts.update(manufacturing_df['PartNumber'].unique())
+        if not sales_df.empty:
+            all_parts.update(sales_df['PartNumber'].unique())
+        if not cost_df.empty:
+            all_parts.update(cost_df['PartNumber'].unique())
 
-            # Create summary dataframe with the requested format
-            summary_data = []
-            for part_number in all_parts:
-                # Check if part has manufacturing history
-                has_jo_hist = False
+        # Create summary dataframe with the requested format
+        summary_data = []
+        for part_number in all_parts:
+            # Check if part has manufacturing history
+            has_jo_hist = False
+            if not manufacturing_df.empty:
+                has_jo_hist = part_number in manufacturing_df['PartNumber'].values
+
+            # Check if part has sales history
+            has_so_hist = False
+            if not sales_df.empty:
+                has_so_hist = part_number in sales_df['PartNumber'].values
+
+            # Get quote info from CSV files if available
+            quote_number = ""
+            due_date = ""
+            estimator = ""  # No default value, will be assigned from paperless data
+
+            if csv_data is not None:
+                # Check if the part number exists in the CSV data
+                if part_number in csv_data['part_number'].values:
+                    pass  # Part number found, continue with processing
+                else:
+                    # Try to find the part number with different formatting
+                    # Remove trailing spaces
+                    stripped_part_number = part_number.strip()
+                    if stripped_part_number in csv_data['part_number'].values:
+                        part_number = stripped_part_number
+
+                part_rows = csv_data[csv_data['part_number'] == part_number]
+                if not part_rows.empty:
+                    # Extract quote number if available
+                    if 'quote_number' in part_rows.columns:
+                        quote_number = part_rows['quote_number'].iloc[0]
+
+                    # Determine estimator based on workflow_status
+                    if 'workflow_status' in part_rows.columns:
+                        workflow_status = part_rows['workflow_status'].iloc[0]
+                        # Map workflow status to estimators
+                        # TODO: Update this mapping with the actual estimator assignments based on your workflow
+                        # Each workflow status should be mapped to the person responsible for quotes in that status
+                        status_to_estimator = {
+                            'draft': 'Dustin Drab',
+                            'in_progress': 'John Smith',  # Replace with actual estimator name
+                            'no_quote': 'Jane Doe',       # Replace with actual estimator name
+                            'quoted': 'Bob Johnson',      # Replace with actual estimator name
+                            'won': 'Alice Brown',         # Replace with actual estimator name
+                            'lost': 'Charlie Davis',      # Replace with actual estimator name
+                            'not_started': 'Dustin Drab'  # Add the not_started status
+                        }
+                        # Get estimator from mapping or use a default
+                        if pd.notna(workflow_status) and workflow_status in status_to_estimator:
+                            estimator = status_to_estimator[workflow_status]
+
+            # Get due date from quotes data if available
+            if quotes_data is not None and quote_number:
+                # Log the quote_number for debugging
+                logging.info(f"Looking for quote_number: {quote_number}, type: {type(quote_number)}")
+
+                # Log the first few quote numbers from quotes_data for comparison
+                if not quotes_data.empty:
+                    sample_quotes = quotes_data['quote_number'].head(5).tolist()
+                    logging.info(f"Sample quote numbers from quotes_data: {sample_quotes}, types: {[type(q) for q in sample_quotes]}")
+
+                # Convert quote_number to integer and find matching row in quotes_data
+                # First, convert the float to an integer by removing the decimal part
+                try:
+                    int_quote_number = int(float(quote_number))
+                    # Find rows where quote_number equals int_quote_number
+                    quote_rows = quotes_data[quotes_data['quote_number'] == int_quote_number]
+                    logging.info(f"save_results: Converted quote_number from {quote_number} to {int_quote_number}")
+                except (ValueError, TypeError):
+                    # If conversion fails, fall back to string comparison
+                    str_quote_number = str(quote_number).strip()
+                    quote_rows = quotes_data[quotes_data['quote_number'].astype(str).str.strip() == str_quote_number]
+                    logging.info(f"save_results: Using string comparison for quote_number: {str_quote_number}")
+
+                # Log the number of matching rows found
+                logging.info(f"Found {len(quote_rows)} matching rows in quotes_data")
+
+                if not quote_rows.empty:
+                    # Extract due date if available
+                    if 'due_date' in quote_rows.columns:
+                        due_date_raw = quote_rows['due_date'].iloc[0]
+                        if pd.notna(due_date_raw):
+                            # Parse the ISO format date string and convert to YYYY-MM-DD format
+                            try:
+                                # Handle ISO format with timezone (e.g., "2025-02-12T18:00:00+00:00")
+                                from dateutil import parser
+                                due_date_obj = parser.parse(due_date_raw)
+                                due_date = due_date_obj.strftime('%Y-%m-%d')
+                            except Exception as e:
+                                logging.warning(f"Failed to parse due date '{due_date_raw}': {e}")
+                                # Fallback to lead_time calculation if due_date parsing fails
+                                if csv_data is not None and 'lead_time' in part_rows.columns:
+                                    lead_time = part_rows['lead_time'].iloc[0]
+                                    if pd.notna(lead_time) and lead_time != 0:
+                                        current_date = datetime.now()
+                                        due_date_obj = current_date + timedelta(days=int(lead_time))
+                                        due_date = due_date_obj.strftime('%Y-%m-%d')
+
+            summary_data.append({
+                'PartNumber': part_number,
+                'Quote #': quote_number,
+                'Due Date': due_date,
+                'Estimator assigned': estimator,
+                'SO Hist': 'TRUE' if has_so_hist else 'FALSE',
+                'JO Hist': 'TRUE' if has_jo_hist else 'FALSE'
+            })
+
+            # Log the summary data for debugging
+            logging.info(f"Summary data for part {part_number}: {summary_data[-1]}")
+
+        # Create the summary dataframe
+        summary_df = pd.DataFrame(summary_data)
+
+        # Log the summary dataframe for debugging
+        logging.info(f"Summary dataframe columns: {summary_df.columns.tolist()}")
+        logging.info(f"Summary dataframe shape: {summary_df.shape}")
+        if not summary_df.empty:
+            logging.info(f"First row of summary dataframe: {summary_df.iloc[0].to_dict()}")
+
+        # Ensure column names are correct
+        if 'Quote #' not in summary_df.columns:
+            logging.warning("'Quote #' column is missing from summary dataframe!")
+        if 'Due Date' not in summary_df.columns:
+            logging.warning("'Due Date' column is missing from summary dataframe!")
+        if 'Estimator assigned' not in summary_df.columns:
+            logging.warning("'Estimator assigned' column is missing from summary dataframe!")
+
+        # Explicitly set the column order to ensure all columns are included
+        column_order = ['PartNumber', 'Quote #', 'Due Date', 'Estimator assigned', 'SO Hist', 'JO Hist']
+
+        # Reorder columns if they exist
+        existing_columns = [col for col in column_order if col in summary_df.columns]
+        missing_columns = [col for col in column_order if col not in summary_df.columns]
+
+        if missing_columns:
+            logging.warning(f"Missing columns in summary dataframe: {missing_columns}")
+            # Add missing columns with empty values
+            for col in missing_columns:
+                summary_df[col] = ""
+
+        # Reorder columns to match column_order
+        summary_df = summary_df[column_order]
+
+        # Log the final dataframe columns
+        logging.info(f"Final summary dataframe columns: {summary_df.columns.tolist()}")
+
+        # Check the output file extension
+        is_csv = output_path.lower().endswith('.csv')
+
+        if is_csv:
+            # Save only the summary dataframe to a CSV file
+            summary_df.to_csv(output_path, index=False)
+            logging.warning(f"CSV output format detected. Only the Summary sheet was saved to {output_path}. For multiple sheets, use .xlsx extension.")
+            print(f"\n⚠️ Warning: CSV output format detected. Only the Summary sheet was saved to '{output_path}'. For multiple sheets, use .xlsx extension.")
+        else:
+            # Save all dataframes to an Excel file with multiple sheets
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+
+                # Save the other sheets
                 if not manufacturing_df.empty:
-                    has_jo_hist = part_number in manufacturing_df['PartNumber'].values
-
-                # Check if part has sales history
-                has_so_hist = False
+                    manufacturing_df.to_excel(writer, sheet_name='Manufacturing History', index=False)
                 if not sales_df.empty:
-                    has_so_hist = part_number in sales_df['PartNumber'].values
-
-                # Get quote info from CSV files if available
-                quote_number = ""
-                due_date = ""
-                estimator = ""  # No default value, will be assigned from paperless data
-
-                if csv_data is not None:
-                    # Check if the part number exists in the CSV data
-                    if part_number in csv_data['part_number'].values:
-                        pass  # Part number found, continue with processing
-                    else:
-                        # Try to find the part number with different formatting
-                        # Remove trailing spaces
-                        stripped_part_number = part_number.strip()
-                        if stripped_part_number in csv_data['part_number'].values:
-                            part_number = stripped_part_number
-
-                    part_rows = csv_data[csv_data['part_number'] == part_number]
-                    if not part_rows.empty:
-                        # Extract quote number if available
-                        if 'quote_number' in part_rows.columns:
-                            quote_number = part_rows['quote_number'].iloc[0]
-
-                        # Determine estimator based on workflow_status
-                        if 'workflow_status' in part_rows.columns:
-                            workflow_status = part_rows['workflow_status'].iloc[0]
-                            # Map workflow status to estimators
-                            # TODO: Update this mapping with the actual estimator assignments based on your workflow
-                            # Each workflow status should be mapped to the person responsible for quotes in that status
-                            status_to_estimator = {
-                                'draft': 'Dustin Drab',
-                                'in_progress': 'John Smith',  # Replace with actual estimator name
-                                'no_quote': 'Jane Doe',       # Replace with actual estimator name
-                                'quoted': 'Bob Johnson',      # Replace with actual estimator name
-                                'won': 'Alice Brown',         # Replace with actual estimator name
-                                'lost': 'Charlie Davis',      # Replace with actual estimator name
-                                'not_started': 'Dustin Drab'  # Add the not_started status
-                            }
-                            # Get estimator from mapping or use a default
-                            if pd.notna(workflow_status) and workflow_status in status_to_estimator:
-                                estimator = status_to_estimator[workflow_status]
-
-                # Get due date from quotes data if available
-                if quotes_data is not None and quote_number:
-                    # Log the quote_number for debugging
-                    logging.info(f"Looking for quote_number: {quote_number}, type: {type(quote_number)}")
-
-                    # Log the first few quote numbers from quotes_data for comparison
-                    if not quotes_data.empty:
-                        sample_quotes = quotes_data['quote_number'].head(5).tolist()
-                        logging.info(f"Sample quote numbers from quotes_data: {sample_quotes}, types: {[type(q) for q in sample_quotes]}")
-
-                    # Convert quote_number to integer and find matching row in quotes_data
-                    # First, convert the float to an integer by removing the decimal part
-                    try:
-                        int_quote_number = int(float(quote_number))
-                        # Find rows where quote_number equals int_quote_number
-                        quote_rows = quotes_data[quotes_data['quote_number'] == int_quote_number]
-                        logging.info(f"save_results: Converted quote_number from {quote_number} to {int_quote_number}")
-                    except (ValueError, TypeError):
-                        # If conversion fails, fall back to string comparison
-                        str_quote_number = str(quote_number).strip()
-                        quote_rows = quotes_data[quotes_data['quote_number'].astype(str).str.strip() == str_quote_number]
-                        logging.info(f"save_results: Using string comparison for quote_number: {str_quote_number}")
-
-                    # Log the number of matching rows found
-                    logging.info(f"Found {len(quote_rows)} matching rows in quotes_data")
-
-                    if not quote_rows.empty:
-                        # Extract due date if available
-                        if 'due_date' in quote_rows.columns:
-                            due_date_raw = quote_rows['due_date'].iloc[0]
-                            if pd.notna(due_date_raw):
-                                # Parse the ISO format date string and convert to YYYY-MM-DD format
-                                try:
-                                    # Handle ISO format with timezone (e.g., "2025-02-12T18:00:00+00:00")
-                                    from dateutil import parser
-                                    due_date_obj = parser.parse(due_date_raw)
-                                    due_date = due_date_obj.strftime('%Y-%m-%d')
-                                except Exception as e:
-                                    logging.warning(f"Failed to parse due date '{due_date_raw}': {e}")
-                                    # Fallback to lead_time calculation if due_date parsing fails
-                                    if csv_data is not None and 'lead_time' in part_rows.columns:
-                                        lead_time = part_rows['lead_time'].iloc[0]
-                                        if pd.notna(lead_time) and lead_time != 0:
-                                            current_date = datetime.now()
-                                            due_date_obj = current_date + timedelta(days=int(lead_time))
-                                            due_date = due_date_obj.strftime('%Y-%m-%d')
-
-                summary_data.append({
-                    'PartNumber': part_number,
-                    'Quote #': quote_number,
-                    'Due Date': due_date,
-                    'Estimator assigned': estimator,
-                    'SO Hist': 'TRUE' if has_so_hist else 'FALSE',
-                    'JO Hist': 'TRUE' if has_jo_hist else 'FALSE'
-                })
-
-                # Log the summary data for debugging
-                logging.info(f"Summary data for part {part_number}: {summary_data[-1]}")
-
-            # Create and save the summary dataframe
-            summary_df = pd.DataFrame(summary_data)
-
-            # Log the summary dataframe for debugging
-            logging.info(f"Summary dataframe columns: {summary_df.columns.tolist()}")
-            logging.info(f"Summary dataframe shape: {summary_df.shape}")
-            if not summary_df.empty:
-                logging.info(f"First row of summary dataframe: {summary_df.iloc[0].to_dict()}")
-
-            # Ensure column names are correct
-            if 'Quote #' not in summary_df.columns:
-                logging.warning("'Quote #' column is missing from summary dataframe!")
-            if 'Due Date' not in summary_df.columns:
-                logging.warning("'Due Date' column is missing from summary dataframe!")
-            if 'Estimator assigned' not in summary_df.columns:
-                logging.warning("'Estimator assigned' column is missing from summary dataframe!")
-
-            # Explicitly set the column order to ensure all columns are included
-            column_order = ['PartNumber', 'Quote #', 'Due Date', 'Estimator assigned', 'SO Hist', 'JO Hist']
-
-            # Reorder columns if they exist
-            existing_columns = [col for col in column_order if col in summary_df.columns]
-            missing_columns = [col for col in column_order if col not in summary_df.columns]
-
-            if missing_columns:
-                logging.warning(f"Missing columns in summary dataframe: {missing_columns}")
-                # Add missing columns with empty values
-                for col in missing_columns:
-                    summary_df[col] = ""
-
-            # Reorder columns to match column_order
-            summary_df = summary_df[column_order]
-
-            # Log the final dataframe columns
-            logging.info(f"Final summary dataframe columns: {summary_df.columns.tolist()}")
-
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-
-            # Save the other sheets as before
-            if not manufacturing_df.empty:
-                manufacturing_df.to_excel(writer, sheet_name='Manufacturing History', index=False)
-            if not sales_df.empty:
-                sales_df.to_excel(writer, sheet_name='Sales History', index=False)
-            if not cost_df.empty:
-                cost_df.to_excel(writer, sheet_name='Cost Analysis', index=False)
+                    sales_df.to_excel(writer, sheet_name='Sales History', index=False)
+                if not cost_df.empty:
+                    cost_df.to_excel(writer, sheet_name='Cost Analysis', index=False)
 
         logging.info("Results successfully saved")
         return output_path
